@@ -1,0 +1,127 @@
+
+#include <SPI.h>
+#include <LoRa.h>
+
+// RFM95W connections to classic ESP32 DevKit
+#define LORA_SCK   18
+#define LORA_MISO  19
+#define LORA_MOSI  23
+#define LORA_SS     5
+#define LORA_RST   14
+#define LORA_DIO0  26
+
+// Must match Teensy transmitter
+#define LORA_FREQ_HZ 866E6
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+
+  Serial.println("\nESP32 LoRa Receiver");
+
+  SPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_SS);
+  LoRa.setPins(LORA_SS, LORA_RST, LORA_DIO0);
+
+  if (!LoRa.begin(LORA_FREQ_HZ)) {
+    Serial.println("LoRa initialization FAILED!");
+    while (true) {
+      delay(1000);
+    }
+  }
+
+  // Must match transmitter settings
+  LoRa.setSpreadingFactor(7);
+  LoRa.setSignalBandwidth(125E3);
+  LoRa.setCodingRate4(5);
+  LoRa.setSyncWord(0x12);
+  LoRa.enableCrc();
+
+  Serial.println("LoRa receiver initialized.");
+  Serial.println("Waiting for GY-91 and GPS telemetry...\n");
+}
+
+void printField(const char* name, String value, const char* unit) {
+  Serial.print(name);
+  Serial.print(": ");
+
+  if (value == "NA" || value.length() == 0) {
+    Serial.println("Unavailable");
+  } else {
+    Serial.print(value);
+    if (unit[0] != '\0') {
+      Serial.print(" ");
+      Serial.print(unit);
+    }
+    Serial.println();
+  }
+}
+
+void loop() {
+  int packetSize = LoRa.parsePacket();
+
+  if (packetSize == 0) {
+    return;
+  }
+
+  String packet;
+  while (LoRa.available()) {
+    packet += (char)LoRa.read();
+  }
+
+  Serial.println("\n========== LORA TELEMETRY ==========");
+  Serial.print("Raw packet: ");
+  Serial.println(packet);
+
+  // Split comma-separated fields
+  String fields[15];
+  int fieldCount = 0;
+  int start = 0;
+
+  for (int i = 0; i <= packet.length(); i++) {
+    if (packet[i] == ',' || i == packet.length()) {
+      if (fieldCount < 15) {
+        fields[fieldCount++] = packet.substring(start, i);
+      }
+      start = i + 1;
+    }
+  }
+
+  if (fieldCount != 15) {
+    Serial.print("Unexpected field count: ");
+    Serial.println(fieldCount);
+    Serial.println("Check the transmitter packet format.");
+  } else {
+    printField("Elapsed time", fields[0], "ms");
+
+    Serial.println("\n--- GY-91 MPU6500 ---");
+    printField("Roll angle", fields[1], "deg");
+    printField("Pitch angle", fields[2], "deg");
+    printField("Roll angular rate", fields[3], "deg/s");
+    printField("Pitch angular rate", fields[4], "deg/s");
+    printField("Yaw angular rate", fields[5], "deg/s");
+
+    Serial.println("\n--- GY-91 BMP280 ---");
+    printField("Temperature", fields[6], "C");
+    printField("Atmospheric pressure", fields[7], "hPa");
+    printField("Barometric altitude", fields[8], "m");
+
+    Serial.println("\n--- GPS ---");
+    printField("Latitude", fields[9], "");
+    printField("Longitude", fields[10], "");
+    printField("GPS altitude", fields[11], "m");
+    printField("Satellites", fields[12], "");
+    printField("Ground speed", fields[13], "km/h");
+    printField("HDOP", fields[14], "");
+
+  }
+
+  Serial.print("\nRSSI: ");
+  Serial.print(LoRa.packetRssi());
+  Serial.println(" dBm");
+
+  Serial.print("SNR: ");
+  Serial.print(LoRa.packetSnr());
+  Serial.println(" dB");
+
+  Serial.println("====================================");
+}
